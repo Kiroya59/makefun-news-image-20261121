@@ -1,235 +1,296 @@
 #!/usr/bin/env python3
-"""Build-time composer for the news-image-20261121 front page.
+"""Draw the rev-2 front page for news-image-20261121.
 
-Draws a 1024x1024 newspaper front page with PIL: a navy masthead, five
-stories (four generated editorial photographs plus one drawn COP31
-emblem), crisp vector headlines, and a footer strip of three briefs.
-Deterministic: no network, no clock, no randomness. Writes image.png
-next to this script.
+A one-day newspaper front page, 1024x1024 PNG, rendered with PIL in a
+flat editorial style. One generated photograph (no text in it) illustrates
+the lead story; every headline, standfirst, caption and figure on the
+page is vector text drawn by PIL, so a reader can actually read it.
+
+All copy lives in the SECTIONS table below: one line per headline, one
+line per standfirst. Before anything is drawn, every string is measured
+against the column it will sit in; a string that would not fit stops the
+build instead of being clipped.
+
+Run:  python3 compose.py   (writes image.png next to this file)
 """
-
-import glob
-import hashlib
 import os
 import sys
-
 from PIL import Image, ImageDraw, ImageFont, ImageOps
 
-ROOT = os.path.dirname(os.path.abspath(__file__))
-PHOTO_DIR = os.path.join(ROOT, "work", "photos")
-OUT_PATH = os.path.join(ROOT, "image.png")
+BASE = os.path.dirname(os.path.abspath(__file__))
+PHOTO = os.path.join(
+    BASE, "work", "photos",
+    "media-generation-cop31-antalya-hall-0-cf6ddb49-727e-4a0f-90fb-a5586e668f2a.webp")
+TARGET = os.path.join(BASE, "image.png")
 
-PAGE_W, PAGE_H = 1024, 1024
-MARGIN = 16
-CONTENT_W = PAGE_W - 2 * MARGIN
-
-NAVY = (15, 42, 74)
-NAVY_DARK = (10, 30, 54)
-RED = (178, 34, 34)
-TEAL = (14, 95, 92)
-TEAL_DARK = (9, 66, 64)
-GOLD = (201, 162, 39)
-INK = (20, 20, 20)
-GREY = (90, 90, 90)
-PAPER = (250, 248, 243)
-WHITE = (255, 255, 255)
+PAGE = 1024
+BG = (248, 244, 236)
+FG = (22, 22, 22)
+SUB_FG = (60, 58, 52)
+MUTED = (110, 108, 100)
+NAVY = (20, 38, 74)
+SCARLET = (176, 42, 30)
+FAINT = (215, 210, 200)
 
 FONT_DIR = "/usr/share/fonts/truetype/dejavu"
 
 
-def font(name, size):
+def load(name, size):
     return ImageFont.truetype(os.path.join(FONT_DIR, name), size)
 
 
-SERIF_BOLD = lambda s: font("DejaVuSerif-Bold.ttf", s)
-SANS = lambda s: font("DejaVuSans.ttf", s)
-SANS_BOLD = lambda s: font("DejaVuSans-Bold.ttf", s)
-SANS_ITALIC = lambda s: font("DejaVuSans-Oblique.ttf", s)
+MASTHEAD = load("DejaVuSerif-Bold.ttf", 46)
+DATELINE = load("DejaVuSans-Bold.ttf", 13)
+KICKER = load("DejaVuSans-Bold.ttf", 13)
+LEADLINE = load("DejaVuSerif-Bold.ttf", 28)
+LEADSTAND = load("DejaVuSans.ttf", 14)
+SECTHEAD = load("DejaVuSans-Bold.ttf", 14)
+HEADLINE = load("DejaVuSerif-Bold.ttf", 15)
+STAND = load("DejaVuSans.ttf", 12)
+SMALL = load("DejaVuSans.ttf", 11)
+BIGFIG = load("DejaVuSans-Bold.ttf", 12)
+
+# (section title, [(headline, standfirst), ...]) — 31 stories + lead.
+SECTIONS = [
+    ("EUROPE", [
+        ("GEN Z FLOODS EUROPE'S STREETS",
+         "Youth strike in 25+ nations over costs."),
+        ("POLAND SEEKS MORE NATO JETS",
+         "Warsaw asks allies for air defence."),
+        ("UKRAINE RETAKES 204 SQ KM",
+         "14 settlements freed in Bear Trap push."),
+        ("RUSSIA FIRES 148 DRONES",
+         "Overnight strikes hit 19 sites in Ukraine."),
+        ("GREECE-ISRAEL IN \u20ac1B TALKS",
+         "Defence deals worth up to \u20ac1 billion."),
+    ]),
+    ("AMERICAS", [
+        ("M6.8 QUAKE SHAKES PERU",
+         "Junin tremor felt in Lima; no deaths yet."),
+        ("TRUMP: BRING HUANG BACK",
+         "President urges Nvidia board to reinstate ex-CEO."),
+        ("BESSENT: NO NEW CHIP CURBS",
+         "No further limits on older Nvidia sales."),
+        ("MAMDANI: RIKERS SHUT BY 2032",
+         "NYC mayor sets new date to close jail."),
+    ]),
+    ("ASIA-PACIFIC", [
+        ("INDIA SETS INFLOW RECORD",
+         "Record foreign inflow into Indian shares."),
+        ("NEPAL PM HEADS TO DELHI",
+         "Balen Shah's first foreign trip since March."),
+        ("M6.8 QUAKE HITS TIMOR",
+         "Tremor north-east of Lospalos; no tsunami."),
+        ("AIR NIUGINI JET LANDS SAFELY",
+         "Emergency landing ends without injury."),
+    ]),
+    ("MIDDLE EAST & AFRICA", [
+        ("EISENKOT INVITES LIKUD",
+         "Ex-general seeks unity government in Israel."),
+        ("THREE KILLED IN GAZA STRIKE",
+         "Vehicle carrying aid papers hit in Gaza City."),
+        ("ISRAEL PUSHES INTO SYRIA",
+         "Troops enter Daraa and Quneitra districts."),
+        ("HORMUZ COULD REOPEN SOON",
+         "Iran FM: strait reopens if US meets terms."),
+        ("SOMALIA EXPELS UAE ENVOY",
+         "Diplomatic row deepens in the Horn of Africa."),
+    ]),
+    ("TECH & SCIENCE", [
+        ("MUSK WARNS OF AI CASH CRUNCH",
+         "Compute bills arrive long before revenue."),
+        ("SPACEX CHIP LOANS IN DOUBT",
+         "$43B chip deal stalls over space launch plan."),
+        ("CURSOR DROPS CHINESE AI",
+         "Coding platform cites geopolitical risk."),
+        ("MARKETS SLIDE ON AI FEARS",
+         "Nasdaq sell-off on AI and rate worries."),
+    ]),
+    ("SPORT & CULTURE", [
+        ("ENGLAND 37, ALL BLACKS 12",
+         "Record win over New Zealand; five tries."),
+        ("IRELAND 20, SOUTH AFRICA 17",
+         "Springboks reach final despite defeat."),
+        ("FRANCE 45, ARGENTINA 17",
+         "France face South Africa in 29 Nov final."),
+        ("AUSTRALIA EDGE WALES 29-26",
+         "Scotland thrash Japan 67-5; Fiji beat Italy."),
+        ("KL RAHUL COMPLETES SENA SET",
+         "First Indian opener with tons in all SENA lands."),
+        ("LEEDS STUN CHELSEA 4-1",
+         "Shock defeat piles pressure on the Blues."),
+        ("SATWIK-CHIRAG EXIT IN SEMIS",
+         "Indian pair lose semi in straight games."),
+        ("INDIA A WIN BY 306 RUNS",
+         "Tilak Varma and Kushagra hit tons in Doha."),
+    ]),
+]
+
+# Which sections go in each of the three columns, in order.
+COLUMNS = [[0, 1], [2, 3, 4], [5]]
+
+LEAD_KICKER = "CLIMATE  \u2022  ANTALYA, TURKEY"
+LEAD_HEADLINE = "COP31 TALKS RUN INTO OVERTIME"
+LEAD_STAND = "Draft drops fossil fuels; 100 groups warn the summit is set to fail."
+LEAD_NOTE = "Talks ran two days past their Friday deadline."
+PHOTO_CREDIT = "The plenary hall, Antalya. (Illustration)"
+
+QUOTE_LINES = [
+    '"COP31 is in a bleak overtime, with dwindling food',
+    'and water, and no sign of any progress."',
+]
+QUOTE_CREDIT = "- Rachel Cleetus, Union of Concerned Scientists"
+
+# (figure, label) pairs for the numbers box.
+FIGURES = [
+    ("6.8", "Peru quake magnitude, Junin region"),
+    ("148", "Russian drones fired at Ukraine overnight"),
+    ("204 km\u00b2", "Land Ukraine says it retook"),
+    ("\u20b91.22 lakh crore", "Record inflow to Indian shares"),
+    ("37-12", "England's record win over the All Blacks"),
+    ("$43B", "SpaceX chip financing in dispute"),
+    ("100", "Groups warning COP31 is set to fail"),
+]
+
+FOOT_SOURCES = ("Compiled from Reuters, AP, BBC, Al Jazeera, "
+                "The Verge and TechCrunch")
+FOOT_DATE = ("All stories as reported on Saturday 21 November 2026  "
+             "\u2022  Sport: Saturday's results")
 
 
-def wrap(draw, text, fnt, width):
-    """Greedy word wrap; returns a list of lines that fit in width."""
-    lines, current = [], ""
-    for word in text.split(" "):
-        trial = (current + " " + word).strip()
-        if draw.textlength(trial, font=fnt) <= width:
-            current = trial
-        else:
-            if current:
-                lines.append(current)
-            current = word
-    if current:
-        lines.append(current)
-    return lines
-
-
-def fit_photo(name, width, height):
-    """Load a photo by substring match and crop it to fill width x height."""
-    matches = sorted(glob.glob(os.path.join(PHOTO_DIR, "*%s*.webp" % name)))
-    if not matches:
-        raise FileNotFoundError("no photo matching %r in %s" % (name, PHOTO_DIR))
-    img = Image.open(matches[0]).convert("RGB")
-    return ImageOps.fit(img, (width, height), method=Image.LANCZOS)
-
-
-def draw_kicker(draw, x, y, text):
-    fnt = SANS_BOLD(17)
-    draw.text((x, y), text, font=fnt, fill=RED)
-
-
-def draw_headline(draw, x, y, text, size, width, leading=None):
-    fnt = SANS_BOLD(size)
-    lead = leading or int(size * 1.12)
-    lines = wrap(draw, text, fnt, width)
-    for i, line in enumerate(lines):
-        draw.text((x, y + i * lead), line, font=fnt, fill=INK)
-    return y + len(lines) * lead
-
-
-def draw_sub(draw, x, y, text, size, width, leading=None):
-    fnt = SANS(size)
-    lead = leading or int(size * 1.28)
-    lines = wrap(draw, text, fnt, width)
-    for i, line in enumerate(lines):
-        draw.text((x, y + i * lead), line, font=fnt, fill=INK)
-    return y + len(lines) * lead
-
-
-def draw_rule(draw, y, weight=2):
-    draw.rectangle([MARGIN, y, PAGE_W - MARGIN, y + weight - 1], fill=NAVY)
-
-
-def draw_cop31_emblem(draw, box):
-    """Drawn emblem for the COP31 story: teal panel, globe, COP31, Antalya."""
-    x0, y0, x1, y1 = box
-    draw.rectangle(box, fill=TEAL)
-    draw.rectangle([x0, y0, x1, y0 + 4], fill=GOLD)
-    cx, cy, r = x0 + 42, y0 + 52, 30
-    draw.ellipse([cx - r, cy - r, cx + r, cy + r], outline=(255, 255, 255), width=3)
-    draw.ellipse([cx - 12, cy - r, cx + 12, cy + r], outline=(255, 255, 255), width=2)
-    draw.line([cx - r, cy, cx + r, cy], fill=(255, 255, 255), width=2)
-    draw.line([cx, cy - r, cx, cy + r], fill=(255, 255, 255), width=2)
-    f_big = SANS_BOLD(40)
-    label = "COP31"
-    tw = draw.textlength(label, font=f_big)
-    draw.text((x0 + (x1 - x0 - tw) / 2, y0 + 88), label, font=f_big, fill=WHITE)
-    f_small = SANS_BOLD(16)
-    sub = "ANTALYA"
-    tw2 = draw.textlength(sub, font=f_small)
-    draw.text((x0 + (x1 - x0 - tw2) / 2, y0 + 128), sub, font=f_small, fill=(210, 230, 228))
-
-
-def build_page():
-    page = Image.new("RGB", (PAGE_W, PAGE_H), PAPER)
-    draw = ImageDraw.Draw(page)
-
-    # ---- Masthead ----
-    draw.rectangle([0, 0, PAGE_W, 84], fill=NAVY)
-    title = "THE WORLD IN ONE DAY"
-    f_title = SERIF_BOLD(52)
-    tw = draw.textlength(title, font=f_title)
-    draw.text(((PAGE_W - tw) / 2, 14), title, font=f_title, fill=WHITE)
-    draw.rectangle([0, 84, PAGE_W, 88], fill=GOLD)
-
-    # ---- Dateline strip ----
-    date_line = "SATURDAY  •  21 NOVEMBER 2026"
-    f_date = SANS_BOLD(24)
-    tw = draw.textlength(date_line, font=f_date)
-    draw.text(((PAGE_W - tw) / 2, 92), date_line, font=f_date, fill=NAVY)
-    draw_rule(draw, 122, weight=2)
-
-    # ---- Lead story: Peru quake ----
-    lead_y = 134
-    photo = fit_photo("quake", 500, 292)
-    page.paste(photo, (MARGIN, lead_y))
-    tx = 532
-    tw_col = PAGE_W - MARGIN - tx
-    draw_kicker(draw, tx, lead_y, "PERU  •  EARTHQUAKE")
-    y = draw_headline(draw, tx, lead_y + 28, "M6.8 QUAKE SHAKES PERU", 42, tw_col)
-    draw_sub(draw, tx, y + 10,
-             "Lima empties into the streets as the tremor rocks the Andes; "
-             "rockfalls bury a coastal road. No casualties reported yet.",
-             20, tw_col)
-
-    draw_rule(draw, 440)
-
-    # ---- Mid row: two photo stories ----
-    mid_y = 452
-    col_w = 488
-    for x, name, kicker, headline, sub in [
-        (MARGIN, "protests", "EUROPE  •  YOUTH PROTEST",
-         "GEN Z FLOODS EUROPE'S STREETS",
-         "Youth strike in 25 nations over living costs, schools and "
-         "rearmament; rallies run into the weekend."),
-        (MARGIN + col_w + 16, "chips", "TECH  •  NVIDIA",
-         "TRUMP TO NVIDIA: BRING HUANG BACK",
-         "\u201cGive him a second chance,\u201d the president says; board "
-         "says no. US approved 900,000 AI chips for China."),
-    ]:
-        photo = fit_photo(name, col_w, 158)
-        page.paste(photo, (x, mid_y))
-        draw_kicker(draw, x, mid_y + 166, kicker)
-        y = draw_headline(draw, x, mid_y + 188, headline, 27, col_w)
-        draw_sub(draw, x, y + 6, sub, 17, col_w)
-
-    draw_rule(draw, 748)
-
-    # ---- Bottom row: Poland + COP31, thumb left, text right ----
-    bot_y = 760
-    thumb_w, thumb_h = 180, 150
-    for x, name, kicker, headline, sub, emblem in [
-        (MARGIN, "poland", "POLAND  •  WAR IN UKRAINE",
-         "RUSSIAN MISSILE LANDS IN POLAND",
-         "Tusk calls the crash a likely provocation as NATO jets scramble; "
-         "8 killed in overnight strikes on Ukraine.", False),
-        (MARGIN + col_w + 16, None, "CLIMATE  •  COP31",
-         "COP31 DEAL STALLS",
-         "Draft drops all mention of fossil fuels; talks in Antalya head "
-         "into overtime.", True),
-    ]:
-        if emblem:
-            draw_cop31_emblem(draw, (x, bot_y, x + thumb_w, bot_y + thumb_h))
-        else:
-            photo = fit_photo(name, thumb_w, thumb_h)
-            page.paste(photo, (x, bot_y))
-        tx2 = x + thumb_w + 12
-        tw2 = x + col_w - tx2
-        draw_kicker(draw, tx2, bot_y + 2, kicker)
-        y = draw_headline(draw, tx2, bot_y + 24, headline, 24, tw2)
-        draw_sub(draw, tx2, y + 6, sub, 16, tw2)
-
-    # ---- Footer strip: three briefs ----
-    draw.rectangle([0, 930, PAGE_W, PAGE_H], fill=NAVY_DARK)
-    briefs = [
-        ("CRICKET", "Rahul completes the SENA set, the first Indian opener "
-         "with Test hundreds in all four SENA lands."),
-        ("MARKETS", "A record \u20b91.22 lakh crore flows into Indian shares, "
-         "the biggest monthly foreign inflow ever."),
-        ("ISRAEL", "Eisenkot is tapped to form the next government, "
-         "bypassing Netanyahu."),
-    ]
-    fy = 940
-    for label, text in briefs:
-        f_lab = SANS_BOLD(17)
-        f_txt = SANS(17)
-        draw.text((MARGIN, fy), label + "  \u2014  ", font=f_lab, fill=GOLD)
-        lx = MARGIN + draw.textlength(label + "  \u2014  ", font=f_lab)
-        draw.text((lx, fy), text, font=f_txt, fill=WHITE)
-        fy += 26
-
-    return page
-
-
-def main():
-    page = build_page()
-    page.save(OUT_PATH, format="PNG", optimize=True)
-    data = open(OUT_PATH, "rb").read()
-    print("wrote %s  %d bytes  sha256 %s"
-          % (OUT_PATH, len(data), hashlib.sha256(data).hexdigest()))
-    if len(data) > 1048576:
-        print("WARNING: over the 1 MiB limit", file=sys.stderr)
+def must_fit(canvas, text, face, width, label):
+    if canvas.textlength(text, font=face) > width:
+        print("TOO WIDE (%s): %r is %.0fpx, limit %dpx"
+              % (label, text, canvas.textlength(text, font=face), width),
+              file=sys.stderr)
         sys.exit(1)
 
 
+def paint_section(canvas, left, top, width, title, items, floor):
+    """Paint one navy section header plus its stories. Returns the y
+    just below the last story rule."""
+    canvas.rectangle([left, top, left + width, top + 24], fill=NAVY)
+    canvas.text((left + 8, top + 4), title, font=SECTHEAD, fill="white")
+    y = top + 29
+    for head, stand in items:
+        if y > floor - 20:
+            print("OVERFLOW in %s at %r" % (title, head), file=sys.stderr)
+            sys.exit(1)
+        must_fit(canvas, head, HEADLINE, width, title + " headline")
+        must_fit(canvas, stand, STAND, width, title + " standfirst")
+        canvas.text((left, y), head, font=HEADLINE, fill=FG)
+        canvas.text((left, y + 18), stand, font=STAND, fill=SUB_FG)
+        y += 37
+        canvas.line([left, y, left + width, y], fill=FAINT, width=1)
+        y += 6
+    return y
+
+
+def paint_box_head(canvas, left, top, width, title):
+    canvas.rectangle([left, top, left + width, top + 22], fill=SCARLET)
+    canvas.text((left + 8, top + 3), title, font=SECTHEAD, fill="white")
+    return top + 22
+
+
+def build():
+    page = Image.new("RGB", (PAGE, PAGE), BG)
+    canvas = ImageDraw.Draw(page)
+
+    # Masthead.
+    canvas.text((PAGE // 2, 12), "THE WORLD IN ONE DAY", font=MASTHEAD,
+                fill=NAVY, anchor="ma")
+    canvas.text((PAGE // 2, 66),
+                "SATURDAY, 21 NOVEMBER 2026  \u2022  31 STORIES FROM EVERY REGION",
+                font=DATELINE, fill=FG, anchor="ma")
+    canvas.line([28, 88, PAGE - 28, 88], fill=NAVY, width=3)
+    canvas.line([28, 92, PAGE - 28, 92], fill=NAVY, width=1)
+
+    # Lead story, left; photo, right.
+    lx, ly, lw = 28, 100, 660
+    canvas.text((lx, ly), LEAD_KICKER, font=KICKER, fill=SCARLET)
+    must_fit(canvas, LEAD_HEADLINE, LEADLINE, lw, "lead headline")
+    must_fit(canvas, LEAD_STAND, LEADSTAND, lw, "lead standfirst")
+    canvas.text((lx, ly + 24), LEAD_HEADLINE, font=LEADLINE, fill=FG)
+    canvas.text((lx, ly + 62), LEAD_STAND, font=LEADSTAND, fill=SUB_FG)
+    canvas.text((lx, ly + 86), LEAD_NOTE, font=SMALL, fill=MUTED)
+
+    px, py, pw, ph = 712, 100, 284, 142
+    shot = ImageOps.fit(Image.open(PHOTO).convert("RGB"), (pw, ph),
+                        method=Image.LANCZOS)
+    page.paste(shot, (px, py))
+    canvas.rectangle([px, py, px + pw - 1, py + ph - 1], outline=NAVY, width=1)
+    canvas.text((px, py + ph + 6), PHOTO_CREDIT, font=SMALL, fill=MUTED)
+
+    canvas.line([28, 268, PAGE - 28, 268], fill=NAVY, width=2)
+
+    # Three columns of sections.
+    margin, gutter = 28, 14
+    col_w = (PAGE - 2 * margin - 2 * gutter) // 3
+    xs = [margin, margin + col_w + gutter, margin + 2 * (col_w + gutter)]
+    top, floor = 278, 962
+
+    y = top
+    for idx in COLUMNS[0]:
+        title, items = SECTIONS[idx]
+        y = paint_section(canvas, xs[0], y, col_w, title, items, floor)
+        y += 4
+
+    # Quote of the day, foot of column one.
+    y = paint_box_head(canvas, xs[0], y + 2, col_w, "QUOTE OF THE DAY")
+    for line in QUOTE_LINES:
+        must_fit(canvas, line, STAND, col_w, "quote")
+        y += 4
+        canvas.text((xs[0], y), line, font=STAND, fill=FG)
+        y += 16
+    must_fit(canvas, QUOTE_CREDIT, SMALL, col_w, "quote credit")
+    canvas.text((xs[0], y + 2), QUOTE_CREDIT, font=SMALL, fill=MUTED)
+    y += 18
+    if y > floor:
+        print("OVERFLOW: quote box ends at y=%d, floor=%d" % (y, floor),
+              file=sys.stderr)
+        sys.exit(1)
+
+    y = top
+    for idx in COLUMNS[1]:
+        title, items = SECTIONS[idx]
+        y = paint_section(canvas, xs[1], y, col_w, title, items, floor)
+        y += 4
+
+    y = top
+    for idx in COLUMNS[2]:
+        title, items = SECTIONS[idx]
+        y = paint_section(canvas, xs[2], y, col_w, title, items, floor)
+        y += 4
+
+    # By the numbers, foot of column three.
+    y = paint_box_head(canvas, xs[2], y + 2, col_w, "BY THE NUMBERS")
+    for figure, label in FIGURES:
+        fig_w = canvas.textlength(figure, font=BIGFIG)
+        lab_w = canvas.textlength(label, font=STAND)
+        if fig_w + 6 + lab_w > col_w:
+            print("TOO WIDE (numbers row): %r" % (figure + "  " + label,),
+                  file=sys.stderr)
+            sys.exit(1)
+        y += 4
+        canvas.text((xs[2], y), figure, font=BIGFIG, fill=FG)
+        canvas.text((xs[2] + fig_w + 6, y), label, font=STAND, fill=FG)
+        y += 16
+    if y > floor:
+        print("OVERFLOW: numbers box ends at y=%d, floor=%d" % (y, floor),
+              file=sys.stderr)
+        sys.exit(1)
+
+    # Footer.
+    canvas.line([28, 968, PAGE - 28, 968], fill=NAVY, width=2)
+    canvas.text((PAGE // 2, 976), FOOT_SOURCES, font=SMALL, fill=MUTED,
+                anchor="ma")
+    canvas.text((PAGE // 2, 994), FOOT_DATE, font=SMALL, fill=MUTED,
+                anchor="ma")
+
+    page.save(TARGET, format="PNG", optimize=True)
+    print("wrote %s  %s  %d bytes"
+          % (TARGET, page.size, os.path.getsize(TARGET)))
+
+
 if __name__ == "__main__":
-    main()
+    build()

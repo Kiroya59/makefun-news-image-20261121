@@ -1,3 +1,7 @@
 news-image-20261121-kit/
 kit.tar.gz
 out/
+__pycache__/
+competition.json
+prompt-file.txt
+*.json
